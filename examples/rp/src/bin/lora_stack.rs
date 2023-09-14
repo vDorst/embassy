@@ -7,18 +7,23 @@
 #![no_main]
 #![feature(type_alias_impl_trait)]
 #![allow(unused_imports)]
+#![feature(try_blocks)]
+#![feature(async_fn_in_trait)]
+#![feature(impl_trait_projections)]
 
 use core::cell::RefCell;
 
 use defmt::*;
 use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
+use embassy_embedded_hal::shared_bus::SpiDeviceError;
+use embassy_embedded_hal::SetConfig;
 use embassy_executor::Spawner;
 use embassy_lora::iv::GenericSx126xInterfaceVariant;
 use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::peripherals::SPI1;
 use embassy_rp::spi::{self, Async, Blocking, Config, Spi};
-use embassy_sync::blocking_mutex::raw::NoopRawMutex;
-use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::{NoopRawMutex, RawMutex};
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::image::{Image, ImageRawLE};
 use embedded_graphics::mono_font::ascii::FONT_10X20;
@@ -27,7 +32,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::text::Text;
-use embedded_hal_async::spi::SpiBus;
+use embedded_hal_async::spi::{Operation, SpiBus, SpiDevice};
 use lora_phy::mod_params::*;
 use lora_phy::sx1261_2::SX1261_2;
 use lora_phy::LoRa;
@@ -66,9 +71,11 @@ async fn main(_spawner: Spawner) {
 
     // Commit these two lines below to make it compile right with lora.
     let spi_bus = Mutex::<NoopRawMutex, _>::new(spi);
-    let spi = SPI_BUS.init(spi_bus);
+    let spi_bus = SPI_BUS.init(spi_bus);
 
-    //let display_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(display_cs, Level::High), display_config);
+    let display_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(display_cs, Level::High), display_config.clone());
+
+    let lora_spi = SpiBusWithConfig::new(&spi_bus, display_config);
 
     // let dcx = Output::new(dcx, Level::Low);
     // let rst = Output::new(rst, Level::Low);
@@ -117,7 +124,7 @@ async fn main(_spawner: Spawner) {
 
     let mut lora = {
         match LoRa::new(
-            SX1261_2::new(BoardType::RpPicoWaveshareSx1262, spi, iv),
+            SX1261_2::new(BoardType::RpPicoWaveshareSx1262, lora_spi, iv),
             false,
             &mut delay,
         )
@@ -325,5 +332,65 @@ mod my_display_interface {
             }
             _ => unimplemented!(),
         }
+    }
+}
+
+pub struct SpiBusWithConfig<'a, M: RawMutex, BUS: SetConfig> {
+    bus: &'a Mutex<M, BUS>,
+    config: BUS::Config,
+}
+
+impl<'a, M: RawMutex, BUS: SetConfig> SpiBusWithConfig<'a, M, BUS> {
+    /// Create a new `SpiDeviceWithConfig`.
+    pub fn new(bus: &'a Mutex<M, BUS>, config: BUS::Config) -> Self {
+        Self { bus, config }
+    }
+}
+
+impl<'a, M, BUS> embedded_hal_async::spi::ErrorType for SpiBusWithConfig<'a, M, BUS>
+where
+    BUS: embedded_hal_async::spi::ErrorType + SetConfig,
+    M: RawMutex,
+{
+    type Error = BUS::Error;
+}
+
+impl<M, BUS> embedded_hal_async::spi::SpiBus for SpiBusWithConfig<'_, M, BUS>
+where
+    M: RawMutex,
+    BUS: embedded_hal_async::spi::SpiBus + SetConfig,
+{
+    async fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+        let mut bus = self.bus.lock().await;
+        bus.set_config(&self.config);
+
+        bus.read(words).await
+    }
+
+    async fn write(&mut self, words: &[u8]) -> Result<(), Self::Error> {
+        let mut bus = self.bus.lock().await;
+        bus.set_config(&self.config);
+
+        bus.write(words).await
+    }
+
+    async fn transfer(&mut self, read: &mut [u8], write: &[u8]) -> Result<(), Self::Error> {
+        let mut bus = self.bus.lock().await;
+        bus.set_config(&self.config);
+
+        bus.transfer(read, write).await
+    }
+
+    async fn transfer_in_place(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
+        let mut bus = self.bus.lock().await;
+        bus.set_config(&self.config);
+
+        bus.transfer_in_place(words).await
+    }
+
+    async fn flush(&mut self) -> Result<(), Self::Error> {
+        let mut bus = self.bus.lock().await;
+
+        bus.flush().await
     }
 }
