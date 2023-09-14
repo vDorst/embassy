@@ -10,14 +10,15 @@
 use core::cell::RefCell;
 
 use defmt::*;
-use embassy_embedded_hal::shared_bus::blocking::spi::SpiDeviceWithConfig;
+use embassy_embedded_hal::shared_bus::asynch::spi::SpiDeviceWithConfig;
 use embassy_executor::Spawner;
-use embassy_rp::gpio::{Level, Output};
-use embassy_rp::spi;
-use embassy_rp::spi::{Blocking, Spi};
+use embassy_lora::iv::GenericSx126xInterfaceVariant;
+use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
+use embassy_rp::peripherals::SPI1;
+use embassy_rp::spi::{self, Async, Blocking, Config, Spi};
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_sync::blocking_mutex::Mutex;
-use embassy_time::Delay;
+use embassy_time::{Delay, Duration, Timer};
 use embedded_graphics::image::{Image, ImageRawLE};
 use embedded_graphics::mono_font::ascii::FONT_10X20;
 use embedded_graphics::mono_font::MonoTextStyle;
@@ -25,17 +26,23 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::text::Text;
+use lora_phy::mod_params::*;
+use lora_phy::sx1261_2::SX1261_2;
+use lora_phy::LoRa;
 use st7789::{Orientation, ST7789};
+use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
+const LORA_FREQUENCY_IN_HZ: u32 = 868_500_000; // warning: set this appropriately for the region
+
 use crate::my_display_interface::SPIDeviceInterface;
-use crate::touch::Touch;
 
 const DISPLAY_FREQ: u32 = 64_000_000;
-const TOUCH_FREQ: u32 = 200_000;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
+    static SPI_BUS: StaticCell<Mutex<NoopRawMutex, SPI1>> = StaticCell::new();
+
     let p = embassy_rp::init(Default::default());
     info!("Hello World!");
 
@@ -46,132 +53,139 @@ async fn main(_spawner: Spawner) {
     let miso = p.PIN_12;
     let mosi = p.PIN_11;
     let clk = p.PIN_10;
-    //let touch_irq = p.PIN_17;
 
     // create SPI
     let mut display_config = spi::Config::default();
     display_config.frequency = DISPLAY_FREQ;
     display_config.phase = spi::Phase::CaptureOnSecondTransition;
     display_config.polarity = spi::Polarity::IdleHigh;
-    let mut touch_config = spi::Config::default();
-    touch_config.frequency = TOUCH_FREQ;
-    touch_config.phase = spi::Phase::CaptureOnSecondTransition;
-    touch_config.polarity = spi::Polarity::IdleHigh;
 
-    let spi: Spi<'_, _, Blocking> = Spi::new_blocking(p.SPI1, clk, mosi, miso, touch_config.clone());
-    let spi_bus: Mutex<NoopRawMutex, _> = Mutex::new(RefCell::new(spi));
+    let spi = Spi::new(p.SPI1, clk, mosi, miso, p.DMA_CH0, p.DMA_CH1, Config::default());
 
-    let display_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(display_cs, Level::High), display_config);
-    // let touch_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(touch_cs, Level::High), touch_config);
+    let spi_bus = Mutex::<NoopRawMutex, _>::new(spi);
+    let spi_bus = SPI_BUS.init(spi_bus);
 
-    // let mut touch = Touch::new(touch_spi);
+    // let display_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(display_cs, Level::High), display_config);
 
-    let dcx = Output::new(dcx, Level::Low);
-    let rst = Output::new(rst, Level::Low);
-    // dcx: 0 = command, 1 = data
+    // let dcx = Output::new(dcx, Level::Low);
+    // let rst = Output::new(rst, Level::Low);
+    // // dcx: 0 = command, 1 = data
 
-    // Enable LCD backlight
-    let _bl = Output::new(bl, Level::High);
+    // // Enable LCD backlight
+    // let _bl = Output::new(bl, Level::High);
 
-    // display interface abstraction from SPI and DC
-    let di = SPIDeviceInterface::new(display_spi, dcx);
+    // // display interface abstraction from SPI and DC
+    // let di = SPIDeviceInterface::new(display_spi, dcx);
 
-    // create driver
-    let mut display = ST7789::new(di, rst, 240, 320);
+    // // create driver
+    // let mut display = ST7789::new(di, rst, 240, 320);
 
-    // initialize
-    display.init(&mut Delay).unwrap();
+    let mut delay = Delay;
 
-    // set default orientation
-    display.set_orientation(Orientation::Landscape).unwrap();
+    // // initialize
+    // display.init(&mut delay).unwrap();
 
-    display.clear(Rgb565::BLACK).unwrap();
+    // // set default orientation
+    // display.set_orientation(Orientation::Landscape).unwrap();
 
-    let raw_image_data = ImageRawLE::new(include_bytes!("../../assets/ferris.raw"), 86);
-    let ferris = Image::new(&raw_image_data, Point::new(34, 68));
+    // display.clear(Rgb565::BLACK).unwrap();
 
-    // Display the image
-    ferris.draw(&mut display).unwrap();
+    // let raw_image_data = ImageRawLE::new(include_bytes!("../../assets/ferris.raw"), 86);
+    // let ferris = Image::new(&raw_image_data, Point::new(34, 68));
 
-    let style = MonoTextStyle::new(&FONT_10X20, Rgb565::GREEN);
-    Text::new(
-        "Hello embedded_graphics \n + embassy + RP2040!",
-        Point::new(20, 200),
-        style,
-    )
-    .draw(&mut display)
-    .unwrap();
+    // // Display the image
+    // ferris.draw(&mut display).unwrap();
 
-    loop {
-        // if let Some((x, y)) = touch.read() {
-        //     let style = PrimitiveStyleBuilder::new().fill_color(Rgb565::BLUE).build();
+    // let style = MonoTextStyle::new(&FONT_10X20, Rgb565::GREEN);
+    // Text::new(
+    //     "Hello embedded_graphics \n + embassy + RP2040!",
+    //     Point::new(20, 30),
+    //     style,
+    // )
+    // .draw(&mut display)
+    // .unwrap();
 
-        //     Rectangle::new(Point::new(x - 1, y - 1), Size::new(3, 3))
-        //         .into_styled(style)
-        //         .draw(&mut display)
-        //         .unwrap();
-        // }
-    }
-}
+    let nss = Output::new(p.PIN_3.degrade(), Level::High);
+    let reset = Output::new(p.PIN_15.degrade(), Level::High);
+    let dio1 = Input::new(p.PIN_20.degrade(), Pull::None);
+    let busy = Input::new(p.PIN_2.degrade(), Pull::None);
 
-/// Driver for the XPT2046 resistive touchscreen sensor
-mod touch {
-    use embedded_hal_1::spi::{Operation, SpiDevice};
+    let iv = GenericSx126xInterfaceVariant::new(nss, reset, dio1, busy, None, None).unwrap();
 
-    struct Calibration {
-        x1: i32,
-        x2: i32,
-        y1: i32,
-        y2: i32,
-        sx: i32,
-        sy: i32,
-    }
-
-    const CALIBRATION: Calibration = Calibration {
-        x1: 3880,
-        x2: 340,
-        y1: 262,
-        y2: 3850,
-        sx: 320,
-        sy: 240,
+    let mut lora = {
+        match LoRa::new(
+            SX1261_2::new(BoardType::RpPicoWaveshareSx1262, spi_bus, iv),
+            false,
+            &mut delay,
+        )
+        .await
+        {
+            Ok(l) => l,
+            Err(err) => {
+                info!("Radio error = {}", err);
+                return;
+            }
+        }
     };
 
-    pub struct Touch<SPI: SpiDevice> {
-        spi: SPI,
-    }
+    let mut debug_indicator = Output::new(p.PIN_24, Level::Low);
 
-    impl<SPI> Touch<SPI>
-    where
-        SPI: SpiDevice,
-    {
-        pub fn new(spi: SPI) -> Self {
-            Self { spi }
-        }
+    let mut receiving_buffer = [00u8; 100];
 
-        pub fn read(&mut self) -> Option<(i32, i32)> {
-            let mut x = [0; 2];
-            let mut y = [0; 2];
-            self.spi
-                .transaction(&mut [
-                    Operation::Write(&[0x90]),
-                    Operation::Read(&mut x),
-                    Operation::Write(&[0xd0]),
-                    Operation::Read(&mut y),
-                ])
-                .unwrap();
-
-            let x = (u16::from_be_bytes(x) >> 3) as i32;
-            let y = (u16::from_be_bytes(y) >> 3) as i32;
-
-            let cal = &CALIBRATION;
-
-            let x = ((x - cal.x1) * cal.sx / (cal.x2 - cal.x1)).clamp(0, cal.sx);
-            let y = ((y - cal.y1) * cal.sy / (cal.y2 - cal.y1)).clamp(0, cal.sy);
-            if x == 0 && y == 0 {
-                None
-            } else {
-                Some((x, y))
+    let mdltn_params = {
+        match lora.create_modulation_params(
+            SpreadingFactor::_10,
+            Bandwidth::_250KHz,
+            CodingRate::_4_8,
+            LORA_FREQUENCY_IN_HZ,
+        ) {
+            Ok(mp) => mp,
+            Err(err) => {
+                info!("Radio error = {}", err);
+                return;
             }
+        }
+    };
+
+    let rx_pkt_params = {
+        match lora.create_rx_packet_params(4, false, receiving_buffer.len() as u8, true, false, &mdltn_params) {
+            Ok(pp) => pp,
+            Err(err) => {
+                info!("Radio error = {}", err);
+                return;
+            }
+        }
+    };
+
+    match lora
+        .prepare_for_rx(&mdltn_params, &rx_pkt_params, None, true, false, 0, 0x00ffffffu32)
+        .await
+    {
+        Ok(()) => {}
+        Err(err) => {
+            info!("Radio error = {}", err);
+            return;
+        }
+    };
+
+    loop {
+        receiving_buffer = [00u8; 100];
+        match lora.rx(&rx_pkt_params, &mut receiving_buffer).await {
+            Ok((received_len, _rx_pkt_status)) => {
+                if (received_len == 3)
+                    && (receiving_buffer[0] == 0x01u8)
+                    && (receiving_buffer[1] == 0x02u8)
+                    && (receiving_buffer[2] == 0x03u8)
+                {
+                    info!("rx successful");
+                    debug_indicator.set_high();
+                    Timer::after(Duration::from_secs(5)).await;
+                    debug_indicator.set_low();
+                } else {
+                    info!("rx unknown packet");
+                }
+            }
+            Err(err) => info!("rx unsuccessful = {}", err),
         }
     }
 }

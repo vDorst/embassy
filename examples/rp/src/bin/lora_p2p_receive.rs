@@ -11,6 +11,7 @@ use embassy_executor::Spawner;
 use embassy_lora::iv::GenericSx126xInterfaceVariant;
 use embassy_rp::gpio::{Input, Level, Output, Pin, Pull};
 use embassy_rp::spi::{Config, Spi};
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Duration, Timer};
 use lora_phy::mod_params::*;
 use lora_phy::sx1261_2::SX1261_2;
@@ -27,6 +28,8 @@ async fn main(_spawner: Spawner) {
     let mosi = p.PIN_11;
     let clk = p.PIN_10;
     let spi = Spi::new(p.SPI1, clk, mosi, miso, p.DMA_CH0, p.DMA_CH1, Config::default());
+
+    let spi_bus = Mutex::new(Arc::new(spi));
 
     let nss = Output::new(p.PIN_3.degrade(), Level::High);
     let reset = Output::new(p.PIN_15.degrade(), Level::High);
