@@ -6,6 +6,7 @@
 #![no_std]
 #![no_main]
 #![feature(type_alias_impl_trait)]
+#![allow(unused_imports)]
 
 use core::cell::RefCell;
 
@@ -26,6 +27,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
 use embedded_graphics::text::Text;
+use embedded_hal_async::spi::SpiBus;
 use lora_phy::mod_params::*;
 use lora_phy::sx1261_2::SX1261_2;
 use lora_phy::LoRa;
@@ -41,7 +43,7 @@ const DISPLAY_FREQ: u32 = 64_000_000;
 
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
-    static SPI_BUS: StaticCell<Mutex<NoopRawMutex, SPI1>> = StaticCell::new();
+    static SPI_BUS: StaticCell<Mutex<NoopRawMutex, Spi<'static, SPI1, Async>>> = StaticCell::new();
 
     let p = embassy_rp::init(Default::default());
     info!("Hello World!");
@@ -62,10 +64,11 @@ async fn main(_spawner: Spawner) {
 
     let spi = Spi::new(p.SPI1, clk, mosi, miso, p.DMA_CH0, p.DMA_CH1, Config::default());
 
+    // Commit these two lines below to make it compile right with lora.
     let spi_bus = Mutex::<NoopRawMutex, _>::new(spi);
-    let spi_bus = SPI_BUS.init(spi_bus);
+    let spi = SPI_BUS.init(spi_bus);
 
-    // let display_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(display_cs, Level::High), display_config);
+    //let display_spi = SpiDeviceWithConfig::new(&spi_bus, Output::new(display_cs, Level::High), display_config);
 
     // let dcx = Output::new(dcx, Level::Low);
     // let rst = Output::new(rst, Level::Low);
@@ -114,7 +117,7 @@ async fn main(_spawner: Spawner) {
 
     let mut lora = {
         match LoRa::new(
-            SX1261_2::new(BoardType::RpPicoWaveshareSx1262, spi_bus, iv),
+            SX1261_2::new(BoardType::RpPicoWaveshareSx1262, spi, iv),
             false,
             &mut delay,
         )
