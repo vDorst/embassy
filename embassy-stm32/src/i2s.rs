@@ -163,6 +163,108 @@ pub struct I2S<'d, T: Instance, Tx, Rx> {
 
 impl<'d, T: Instance, Tx, Rx> I2S<'d, T, Tx, Rx> {
     /// Note: Full-Duplex modes are not supported at this time
+    pub fn new_no_mck(
+        peri: impl Peripheral<P = T> + 'd,
+        sd: impl Peripheral<P = impl MosiPin<T>> + 'd,
+        ws: impl Peripheral<P = impl WsPin<T>> + 'd,
+        ck: impl Peripheral<P = impl CkPin<T>> + 'd,
+        txdma: impl Peripheral<P = Tx> + 'd,
+        rxdma: impl Peripheral<P = Rx> + 'd,
+        freq: Hertz,
+        config: Config,
+    ) -> Self {
+        into_ref!(sd, ws, ck);
+
+        sd.set_as_af(sd.af_num(), AFType::OutputPushPull);
+        sd.set_speed(crate::gpio::Speed::VeryHigh);
+
+        ws.set_as_af(ws.af_num(), AFType::OutputPushPull);
+        ws.set_speed(crate::gpio::Speed::VeryHigh);
+
+        ck.set_as_af(ck.af_num(), AFType::OutputPushPull);
+        ck.set_speed(crate::gpio::Speed::VeryHigh);
+
+        let mut spi_cfg = SpiConfig::default();
+        spi_cfg.frequency = freq;
+        let spi = Spi::new_internal(peri, txdma, rxdma, spi_cfg);
+
+        #[cfg(all(rcc_f4, not(stm32f410)))]
+        let pclk = Hertz(38_400_000); // unsafe { get_freqs() }.plli2s1_r.unwrap();
+
+        #[cfg(stm32f410)]
+        let pclk = T::frequency();
+
+        let (odd, div) = compute_baud_rate(pclk, freq, config.master_clock, config.format);
+
+        #[cfg(any(spi_v1, spi_f1))]
+        {
+            use stm32_metapac::spi::vals::{I2scfg, Odd};
+
+            // 1. Select the I2SDIV[7:0] bits in the SPI_I2SPR register to define the serial clock baud
+            // rate to reach the proper audio sample frequency. The ODD bit in the SPI_I2SPR
+            // register also has to be defined.
+
+            T::REGS.i2spr().modify(|w| {
+                w.set_i2sdiv(div);
+                w.set_odd(match odd {
+                    true => Odd::ODD,
+                    false => Odd::EVEN,
+                });
+
+                // No mclk
+                w.set_mckoe(config.master_clock);
+            });
+
+            // 2. Select the CKPOL bit to define the steady level for the communication clock. Set the
+            // MCKOE bit in the SPI_I2SPR register if the master clock MCK needs to be provided to
+            // the external DAC/ADC audio component (the I2SDIV and ODD values should be
+            // computed depending on the state of the MCK output, for more details refer to
+            // Section 28.4.4: Clock generator).
+
+            // 3. Set the I2SMOD bit in SPI_I2SCFGR to activate the I2S functionalities and choose the
+            // I2S standard through the I2SSTD[1:0] and PCMSYNC bits, the data length through the
+            // DATLEN[1:0] bits and the number of bits per channel by configuring the CHLEN bit.
+            // Select also the I2S master mode and direction (Transmitter or Receiver) through the
+            // I2SCFG[1:0] bits in the SPI_I2SCFGR register.
+
+            // 4. If needed, select all the potential interruption sources and the DMA capabilities by
+            // writing the SPI_CR2 register.
+
+            // 5. The I2SE bit in SPI_I2SCFGR register must be set.
+
+            T::REGS.i2scfgr().modify(|w| {
+                w.set_i2se(false);
+
+                w.set_ckpol(config.clock_polarity.ckpol());
+
+                w.set_i2smod(true);
+                w.set_i2sstd(config.standard.i2sstd());
+                w.set_pcmsync(config.standard.pcmsync());
+
+                w.set_datlen(config.format.datlen());
+                w.set_chlen(config.format.chlen());
+
+                w.set_i2scfg(match (config.mode, config.function) {
+                    (Mode::Master, Function::Transmit) => I2scfg::MASTERTX,
+                    (Mode::Master, Function::Receive) => I2scfg::MASTERRX,
+                    (Mode::Slave, Function::Transmit) => I2scfg::SLAVETX,
+                    (Mode::Slave, Function::Receive) => I2scfg::SLAVERX,
+                });
+
+                w.set_i2se(true)
+            });
+        }
+
+        Self {
+            _peri: spi,
+            sd: Some(sd.map_into()),
+            ws: Some(ws.map_into()),
+            ck: Some(ck.map_into()),
+            mck: None,
+        }
+    }
+
+    /// Note: Full-Duplex modes are not supported at this time
     pub fn new(
         peri: impl Peripheral<P = T> + 'd,
         sd: impl Peripheral<P = impl MosiPin<T>> + 'd,
@@ -271,6 +373,20 @@ impl<'d, T: Instance, Tx, Rx> I2S<'d, T, Tx, Rx> {
         Tx: TxDma<T>,
     {
         self._peri.write(data).await
+    }
+
+    /// Write audio data.
+    pub fn writer(&mut self, data: &[u16]) -> Result<(), Error> {
+        let mut spi = T::REGS;
+
+        // let dr = spi.dr().as_ptr() as *mut W;
+
+        for sample in data {
+            while !spi.sr().read().txe() {}
+            spi.dr().write(|reg| reg.set_dr(*sample));
+        }
+
+        Ok(())
     }
 
     /// Read audio data.
