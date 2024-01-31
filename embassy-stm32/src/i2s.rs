@@ -1,5 +1,6 @@
 //! Inter-IC Sound (I2S)
 use embassy_hal_internal::into_ref;
+use stm32_metapac::SPI3;
 
 use crate::gpio::sealed::{AFType, Pin as _};
 use crate::gpio::AnyPin;
@@ -154,7 +155,7 @@ impl Default for Config {
 
 /// I2S driver.
 pub struct I2S<'d, T: Instance, Tx, Rx> {
-    _peri: Spi<'d, T, Tx, Rx>,
+    pub _peri: Spi<'d, T, Tx, Rx>,
     sd: Option<PeripheralRef<'d, AnyPin>>,
     ws: Option<PeripheralRef<'d, AnyPin>>,
     ck: Option<PeripheralRef<'d, AnyPin>>,
@@ -196,6 +197,8 @@ impl<'d, T: Instance, Tx, Rx> I2S<'d, T, Tx, Rx> {
 
         let (odd, div) = compute_baud_rate(pclk, freq, config.master_clock, config.format);
 
+        defmt::println!("odd: {}, div {}", odd, div);
+
         #[cfg(any(spi_v1, spi_f1))]
         {
             use stm32_metapac::spi::vals::{I2scfg, Odd};
@@ -214,6 +217,9 @@ impl<'d, T: Instance, Tx, Rx> I2S<'d, T, Tx, Rx> {
                 // No mclk
                 w.set_mckoe(config.master_clock);
             });
+
+            // T::REGS.cr2().modify(|r| r.set_txdmaen(true));
+            // T::REGS.dr().write(|w| w.set_dr(0x0000_u16));
 
             // 2. Select the CKPOL bit to define the steady level for the communication clock. Set the
             // MCKOE bit in the SPI_I2SPR register if the master clock MCK needs to be provided to
@@ -379,12 +385,29 @@ impl<'d, T: Instance, Tx, Rx> I2S<'d, T, Tx, Rx> {
     pub fn writer(&mut self, data: &[u16]) -> Result<(), Error> {
         let mut spi = T::REGS;
 
+        // spi.cr2().modify(|r| {
+        //     r.set_frf(vals::Frf::TI);
+        //     r.set_ssoe(true);
+        // });
+
+        spi.cr1().modify(|r| r.set_spe(true));
+
         // let dr = spi.dr().as_ptr() as *mut W;
 
-        for sample in data {
-            while !spi.sr().read().txe() {}
-            spi.dr().write(|reg| reg.set_dr(*sample));
+        for _ in 0..2000 {
+            for sample in data {
+                while !spi.sr().read().txe() {}
+                spi.dr().write(|reg| reg.set_dr(*sample));
+            }
         }
+
+        // defmt::println!("Wait for TXE go high");
+        while !spi.sr().read().txe() {}
+        // defmt::println!("Wait for BSY go low");
+        // while spi.sr().read().bsy() {}
+        // defmt::println!("Wait done");
+
+        spi.cr1().modify(|r| r.set_spe(false));
 
         Ok(())
     }

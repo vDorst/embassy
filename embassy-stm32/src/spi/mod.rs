@@ -90,7 +90,7 @@ pub struct Spi<'d, T: Instance, Tx, Rx> {
     sck: Option<PeripheralRef<'d, AnyPin>>,
     mosi: Option<PeripheralRef<'d, AnyPin>>,
     miso: Option<PeripheralRef<'d, AnyPin>>,
-    txdma: PeripheralRef<'d, Tx>,
+    pub txdma: PeripheralRef<'d, Tx>,
     rxdma: PeripheralRef<'d, Rx>,
     current_word_size: word_impl::Config,
 }
@@ -853,8 +853,7 @@ fn finish_dma(regs: Regs) {
     #[cfg(any(spi_v3, spi_v4, spi_v5))]
     while !regs.sr().read().txc() {}
     #[cfg(not(any(spi_v3, spi_v4, spi_v5)))]
-    while regs.sr().read().bsy() {}
-
+    while !regs.sr().read().txe() {}
     // Disable the spi peripheral
     regs.cr1().modify(|w| {
         w.set_spe(false);
