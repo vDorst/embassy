@@ -90,7 +90,7 @@ pub struct Spi<'d, T: Instance, Tx, Rx> {
     sck: Option<PeripheralRef<'d, AnyPin>>,
     mosi: Option<PeripheralRef<'d, AnyPin>>,
     miso: Option<PeripheralRef<'d, AnyPin>>,
-    pub txdma: PeripheralRef<'d, Tx>,
+    txdma: PeripheralRef<'d, Tx>,
     rxdma: PeripheralRef<'d, Rx>,
     current_word_size: word_impl::Config,
 }
