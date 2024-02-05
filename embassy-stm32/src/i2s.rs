@@ -1,4 +1,6 @@
 //! Inter-IC Sound (I2S)
+use core::sync::atomic::{fence, Ordering};
+
 use embassy_hal_internal::into_ref;
 
 use crate::dma::{ringbuffer, word, Channel, NoDma, TransferOptions, WritableRingBuffer};
@@ -264,6 +266,7 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
 
         let opts = TransferOptions {
             half_transfer_ir: true,
+
             //the new_write() and new_read() always use circular mode
             ..Default::default()
         };
@@ -312,18 +315,16 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
     //     spi_cfg.frequency = freq;
     //     let spi = Spi::new_internal(peri, NoDma, NoDma, spi_cfg);
 
-
-        // TODO move i2s to the new mux infra.
-        //#[cfg(all(rcc_f4, not(stm32f410)))]
-        //let pclk = unsafe { get_freqs() }.plli2s1_q.unwrap();
-        //#[cfg(stm32f410)]
-        let pclk = T::frequency();
+    // TODO move i2s to the new mux infra.
+    //#[cfg(all(rcc_f4, not(stm32f410)))]
+    //let pclk = unsafe { get_freqs() }.plli2s1_q.unwrap();
+    //#[cfg(stm32f410)]
+    // let pclk = T::frequency();
     //     #[cfg(all(rcc_f4, not(stm32f410)))]
     //     let pclk = unsafe { get_freqs() }.plli2s1_q.unwrap();
 
     //     #[cfg(stm32f410)]
     //     let pclk = T::frequency();
-
 
     //     let (odd, div) = compute_baud_rate(pclk, freq, config.master_clock, config.format);
 
@@ -421,6 +422,12 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
         });
 
         self.ring_buffer.request_stop();
+        while self.ring_buffer.is_running() {}
+
+        // "Subsequent reads and writes cannot be moved ahead of preceding reads."
+        fence(Ordering::SeqCst);
+
+        // self.ring_buffer.clear();
 
         T::REGS.cr1().modify(|w| {
             w.set_spe(false);
