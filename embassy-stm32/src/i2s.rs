@@ -3,7 +3,7 @@ use core::sync::atomic::{fence, Ordering};
 
 use embassy_hal_internal::into_ref;
 
-use crate::dma::{ringbuffer, word, Channel, NoDma, TransferOptions, WritableRingBuffer};
+use crate::dma::{word, Channel, NoDma, TransferOptions, WritableRingBuffer};
 use crate::gpio::sealed::{AFType, Pin as _};
 use crate::gpio::AnyPin;
 use crate::pac::spi::vals;
@@ -196,7 +196,7 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
         let spi = Spi::new_internal(peri, NoDma, NoDma, spi_cfg);
 
         #[cfg(all(rcc_f4, not(stm32f410)))]
-        let pclk = Hertz(38_400_000); // unsafe { get_freqs() }.plli2s1_r.unwrap();
+        let pclk = Hertz(2 * 38_400_000); // unsafe { get_freqs() }.plli2s1_r.unwrap();
 
         #[cfg(stm32f410)]
         let pclk = T::frequency();
@@ -395,22 +395,21 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
     // }
 
     /// Write audio data.
-    pub async fn write(&mut self, data: &[W]) -> Result<(), Error> {
-        self.ring_buffer.write_exact(data).await.map_err(|_| Error::Overrun)?;
-        Ok(())
+    pub async fn write(&mut self, data: &[W]) -> Result<usize, Error> {
+        self.ring_buffer.write_exact(data).await.map_err(|_| Error::Overrun)
     }
 
     /// Start the I2S driver.
     pub fn start(&mut self) {
+        T::REGS.cr1().modify(|w| {
+            w.set_spe(true);
+        });
+
         self.ring_buffer.start();
 
         #[cfg(not(any(spi_v3, spi_v4, spi_v5)))]
         T::REGS.cr2().modify(|reg| {
             reg.set_txdmaen(true);
-        });
-
-        T::REGS.cr1().modify(|w| {
-            w.set_spe(true);
         });
     }
 

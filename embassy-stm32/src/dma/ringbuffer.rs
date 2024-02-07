@@ -313,6 +313,16 @@ impl<'a, W: Word> WritableDmaRingBuffer<'a, W> {
             // Confirm that the DMA is not inside data we could have written
             let (pos, complete_count) = critical_section::with(|_| (self.pos(dma), dma.get_complete_count()));
             if (pos >= self.end && pos < start) || (complete_count > 0 && pos >= start) || complete_count > 1 {
+                // defmt::error!(
+                //     "OR1 P{}, S{} E{} C{} L{} cc{}",
+                //     pos,
+                //     start,
+                //     self.end,
+                //     self.cap(),
+                //     len,
+                //     complete_count
+                // );
+                self.end = (self.end + len) % self.cap();
                 Err(OverrunError)
             } else {
                 self.end = (self.end + len) % self.cap();
@@ -333,6 +343,8 @@ impl<'a, W: Word> WritableDmaRingBuffer<'a, W> {
             // Confirm that the DMA is not inside data we could have written
             let pos = self.pos(dma);
             if pos > self.end || pos < start || dma.get_complete_count() > 1 {
+                // defmt::error!("OR2 P{}, S{} E{} C{} L{}", pos, start, self.end, self.cap(), len);
+                self.end = (self.end + len) % self.cap();
                 Err(OverrunError)
             } else {
                 self.end = (self.end + len) % self.cap();
@@ -351,6 +363,7 @@ impl<'a, W: Word> WritableDmaRingBuffer<'a, W> {
             // Confirm that the DMA is not inside data we could have written
             let pos = self.pos(dma);
             if pos > self.end || pos < start || dma.reset_complete_count() > 1 {
+                // defmt::error!("OR3 P{}, S{} E{} C{}", pos, start, self.end, self.cap());
                 Err(OverrunError)
             } else {
                 self.end = head;
