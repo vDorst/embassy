@@ -1,5 +1,7 @@
 //! Utilities for writing USB descriptors.
 
+use embassy_usb_driver::EndpointType;
+
 use crate::builder::Config;
 use crate::driver::EndpointInfo;
 use crate::types::{InterfaceNumber, StringIndex};
@@ -44,6 +46,53 @@ pub(crate) struct DescriptorWriter<'a> {
     num_endpoints_mark: Option<usize>,
 }
 
+// [09] 009: [02, 6a, 00, 02, 01, 00, 80, 32]
+// [08] 008: [0b, 00, 02, 01, 01, 00, 00]
+// [09] 009: [04, 00, 00, 00, 01, 01, 00, 00]
+// [09] 009: [24, 01, 00, 01, 2b, 00, 01, 01]
+// [0c] 012: [24, 02, 01, 01, 01, 03, 02, 03, 00, 00, 00]
+// [09] 009: [24, 03, 03, 02, 03, 01, 01, 00]
+// [09] 009: [04, 01, 00, 00, 01, 02, 00, 00]
+// [09] 009: [04, 01, 01, 01, 01, 02, 00, 00]
+// [07] 007: [24, 01, 01, 01, 01, 00]
+// [0b] 011: [24, 02, 01, 02, 02, 10, 01, 80, bb, 00]
+// [07] 007: [05, 01, 01, c8, 00, 01]
+// [07] 007: [25, 01, 01, 00, 00, 00]
+
+// C.3.2 Configuration Descriptor
+//   9: [02, 77, 00, 02, 01, 00, 80, 32] (Ok)
+
+//   ??????
+//   8: [0b, 00, 02, 01, 01, 00, 00]
+
+//   Standard AC Interface Descriptor
+//   9: [04, 00, 00, 00, 01, 01, 00, 00] (Ok)
+
+//  Class-specific Interface Descriptor
+//   9: [24, 01, 00, 01, 2b, 00, 01, 01] (Nok)
+
+//  Input Terminal Descriptor (ID1) USB
+//  12: [24, 02, 01, 01, 01, 03, 02, 03, 00, 00, 00] (Ok)
+
+//  13: [24, 06, 02, 01, 02, 03, 00, 00, 00, 00, 00, 00]
+
+//   Output Terminal Descriptor (ID4)
+//   9: [24, 03, 03, 02, 03, 01, 02, 00] (Ok)
+
+//    Zero-bandwidth Alternate Setting 0
+//   9: [04, 01, 00, 00, 01, 02, 00, 00] (Ok)
+//    Operational Alternate Setting 1
+//   9: [04, 01, 01, 01, 01, 02, 00, 00] (Ok)
+
+// Table C-16: USB Telephone Class-specific AS Interface Descriptor
+//   7: [24, 01, 01, 01, 01, 00] (Ok)
+// Type I Format Type Descriptor
+//  11: [24, 02, 01, 02, 02, 10, 01, 80, bb, 00] (Ok)
+//  Table C-18: USB Telephone Standard Endpoint Descriptor
+//   7: [05, 01, 01, c8, 00, 01] (Ok)
+// Class-specific Isochronous Audio Data Endpoint Descriptor
+//   7: [25, 01, 01, 00, 00, 00] (Ok)
+
 impl<'a> DescriptorWriter<'a> {
     pub(crate) fn new(buf: &'a mut [u8]) -> Self {
         DescriptorWriter {
@@ -87,7 +136,7 @@ impl<'a> DescriptorWriter<'a> {
             descriptor_type::DEVICE,
             &[
                 0x10,
-                0x02,                     // bcdUSB 2.1
+                0x01,                     // bcdUSB 2.1
                 config.device_class,      // bDeviceClass
                 config.device_sub_class,  // bDeviceSubClass
                 config.device_protocol,   // bDeviceProtocol
@@ -232,16 +281,30 @@ impl<'a> DescriptorWriter<'a> {
             None => panic!("you can only call `endpoint` after `interface/interface_alt`."),
         };
 
+        let refresh = if matches!(endpoint.ep_type, EndpointType::Interrupt) {
+            7
+        } else {
+            0
+        };
+
+        let (ep, addr) = if matches!(endpoint.ep_type, EndpointType::Isochronous) {
+            (0x09, 0x00)
+        } else {
+            (endpoint.ep_type as u8, 0x00)
+        };
+
         self.write(
             descriptor_type::ENDPOINT,
             &[
-                endpoint.addr.into(),   // bEndpointAddress
-                endpoint.ep_type as u8, // bmAttributes
+                endpoint.addr.into(), // bEndpointAddress
+                ep,                   // bmAttributes
                 endpoint.max_packet_size as u8,
                 (endpoint.max_packet_size >> 8) as u8, // wMaxPacketSize
                 endpoint.interval_ms,                  // bInterval
+                refresh,                               // bRefresh
+                addr,                                  // bSynchAddress
             ],
-        );
+        )
     }
 
     /// Writes a string descriptor.

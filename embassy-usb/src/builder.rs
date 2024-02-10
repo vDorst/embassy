@@ -200,7 +200,11 @@ impl<'d, D: Driver<'d>> Builder<'d, D> {
 
         // Log the number of allocator bytes actually used in descriptor buffers
         info!("USB: device_descriptor used: {}", self.device_descriptor.position());
-        info!("USB: config_descriptor used: {}", self.config_descriptor.position());
+        info!(
+            "USB: config_descriptor used: {} {:02x}",
+            self.config_descriptor.position(),
+            self.config_descriptor.buf[..self.config_descriptor.position()],
+        );
         info!("USB: bos_descriptor used: {}", self.bos_descriptor.writer.position());
         info!("USB: msos_descriptor used: {}", msos_descriptor.len());
         info!("USB: control_buf size: {}", self.control_buf.len());
