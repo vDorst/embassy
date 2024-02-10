@@ -282,7 +282,7 @@ impl<'a> DescriptorWriter<'a> {
         };
 
         let refresh = if matches!(endpoint.ep_type, EndpointType::Interrupt) {
-            7
+            0x01 | 0x05
         } else {
             0
         };
