@@ -27,6 +27,13 @@ pub struct InterruptHandler<T: Instance> {
 impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandler<T> {
     unsafe fn on_interrupt() {
         trace!("irq");
+
+        //
+        let gpio_a_dir = 0x4002_0018 as *mut u32;
+
+        // Set STATUS PIN
+        unsafe { *gpio_a_dir = 0x0000_0001 };
+
         let r = T::regs();
         let state = T::state();
 
@@ -34,7 +41,7 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
         if ints.wkupint() || ints.usbsusp() || ints.usbrst() || ints.enumdne() || ints.otgint() || ints.srqint() {
             // Mask interrupts and notify `Bus` to process them
             r.gintmsk().write(|_| {});
-            T::state().bus_waker.wake();
+            state.bus_waker.wake();
         }
 
         // Handle RX
@@ -166,6 +173,9 @@ impl<T: Instance> interrupt::typelevel::Handler<T::Interrupt> for InterruptHandl
         //         ep_num += 1;
         //     }
         // }
+
+        // Clear STATUS PIN
+        unsafe { *gpio_a_dir = 0x0001_0000 };
     }
 }
 
@@ -920,7 +930,7 @@ impl<'d, T: Instance> embassy_usb_driver::Bus for Bus<'d, T> {
 
                 let speed = r.dsts().read().enumspd();
                 let trdt = calculate_trdt(speed, T::frequency());
-                trace!("  speed={} trdt={}", speed.to_bits(), trdt);
+                info!("  speed={} trdt={}", speed.to_bits(), trdt);
                 r.gusbcfg().modify(|w| w.set_trdt(trdt));
 
                 r.gintsts().write(|w| w.set_enumdne(true)); // clear
@@ -1189,6 +1199,21 @@ impl<'d, T: Instance> embassy_usb_driver::EndpointOut for Endpoint<'d, T, Out> {
                         w.set_pktcnt(1);
                     });
 
+                    // Copied from https://github.com/dgoodlad/synopsys-usb-otg/blob/isochronous/src/endpoint.rs#L151
+                    // This is needed to receive both odd and even frame the data.
+                    // Whitout this, you get only data on even frames and that is every 2mS.
+                    // For USB Audio, you need data every 1mS
+                    if matches!(self.info.ep_type, EndpointType::Isochronous(_)) {
+                        // Isochronous endpoints must set the correct even/odd frame bit to
+                        // correspond with the next frame's number.
+                        let frame_number = T::regs().dsts().read().fnsof();
+                        if frame_number & 0x01 == 1 {
+                            T::regs().doepctl(index).modify(|r| r.set_sd0pid_sevnfrm(true));
+                        } else {
+                            T::regs().doepctl(index).modify(|r| r.set_soddfrm(true));
+                        }
+                    }
+
                     // Clear NAK to indicate we are ready to receive more data
                     T::regs().doepctl(index).modify(|w| {
                         w.set_cnak(true);
@@ -1400,7 +1425,7 @@ impl<'d, T: Instance> embassy_usb_driver::ControlPipe for ControlPipe<'d, T> {
 fn to_eptyp(ep_type: EndpointType) -> vals::Eptyp {
     match ep_type {
         EndpointType::Control => vals::Eptyp::CONTROL,
-        EndpointType::Isochronous => vals::Eptyp::ISOCHRONOUS,
+        EndpointType::Isochronous(_) => vals::Eptyp::ISOCHRONOUS,
         EndpointType::Bulk => vals::Eptyp::BULK,
         EndpointType::Interrupt => vals::Eptyp::INTERRUPT,
     }
