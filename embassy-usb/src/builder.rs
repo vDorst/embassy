@@ -1,7 +1,8 @@
+use embassy_usb_driver::{IsochronousSynchronizationType, IsochronousUsageType};
 use heapless::Vec;
 
 use crate::config::MAX_HANDLER_COUNT;
-use crate::descriptor::{BosWriter, DescriptorWriter};
+use crate::descriptor::{descriptor_type, BosWriter, DescriptorWriter};
 use crate::driver::{Driver, Endpoint, EndpointType};
 use crate::msos::{DeviceLevelDescriptor, FunctionLevelDescriptor, MsOsDescriptorWriter};
 use crate::types::{InterfaceNumber, StringIndex};
@@ -446,7 +447,22 @@ impl<'a, 'd, D: Driver<'d>> InterfaceAltBuilder<'a, 'd, D> {
             .alloc_endpoint_out(ep_type, max_packet_size, interval_ms)
             .expect("alloc_endpoint_out failed");
 
-        self.builder.config_descriptor.endpoint(ep.info());
+        let endpoint = ep.info();
+
+        let cd = &mut self.builder.config_descriptor;
+
+        cd.write(
+            descriptor_type::ENDPOINT,
+            &[
+                endpoint.addr.into(),       // bEndpointAddress
+                ep_type.to_bm_attributes(), // bmAttributes
+                endpoint.max_packet_size as u8,
+                (endpoint.max_packet_size >> 8) as u8, // wMaxPacketSize
+                endpoint.interval_ms,                  // bInterval
+                0,                                     // bRefresh
+                0,                                     // bSynchAddress
+            ],
+        );
 
         ep
     }
@@ -484,12 +500,32 @@ impl<'a, 'd, D: Driver<'d>> InterfaceAltBuilder<'a, 'd, D> {
     ///
     /// Descriptors are written in the order builder functions are called. Note that some
     /// classes care about the order.
-    pub fn endpoint_isochronous_in(&mut self, max_packet_size: u16, interval_ms: u8) -> D::EndpointIn {
-        self.endpoint_in(EndpointType::Isochronous, max_packet_size, interval_ms)
+    pub fn endpoint_isochronous_in(
+        &mut self,
+        max_packet_size: u16,
+        interval_ms: u8,
+        sync_type: IsochronousSynchronizationType,
+        usage_type: IsochronousUsageType,
+    ) -> D::EndpointIn {
+        self.endpoint_in(
+            EndpointType::Isochronous((sync_type, usage_type)),
+            max_packet_size,
+            interval_ms,
+        )
     }
 
     /// Allocate a ISOCHRONOUS OUT endpoint and write its descriptor.
-    pub fn endpoint_isochronous_out(&mut self, max_packet_size: u16, interval_ms: u8) -> D::EndpointOut {
-        self.endpoint_out(EndpointType::Isochronous, max_packet_size, interval_ms)
+    pub fn endpoint_isochronous_out(
+        &mut self,
+        max_packet_size: u16,
+        interval_ms: u8,
+        sync_type: IsochronousSynchronizationType,
+        usage_type: IsochronousUsageType,
+    ) -> D::EndpointOut {
+        self.endpoint_out(
+            EndpointType::Isochronous((sync_type, usage_type)),
+            max_packet_size,
+            interval_ms,
+        )
     }
 }

@@ -281,28 +281,16 @@ impl<'a> DescriptorWriter<'a> {
             None => panic!("you can only call `endpoint` after `interface/interface_alt`."),
         };
 
-        let refresh = if matches!(endpoint.ep_type, EndpointType::Interrupt) {
-            0x01 | 0x05
-        } else {
-            0
-        };
-
-        let (ep, addr) = if matches!(endpoint.ep_type, EndpointType::Isochronous) {
-            (0x09, 0x00)
-        } else {
-            (endpoint.ep_type as u8, 0x00)
-        };
-
         self.write(
             descriptor_type::ENDPOINT,
             &[
-                endpoint.addr.into(), // bEndpointAddress
-                ep,                   // bmAttributes
+                endpoint.addr.into(),                // bEndpointAddress
+                endpoint.ep_type.to_bm_attributes(), // bmAttributes
                 endpoint.max_packet_size as u8,
                 (endpoint.max_packet_size >> 8) as u8, // wMaxPacketSize
                 endpoint.interval_ms,                  // bInterval
-                refresh,                               // bRefresh
-                addr,                                  // bSynchAddress
+                0,                                     // bRefresh
+                0,                                     // bSynchAddress
             ],
         )
     }
