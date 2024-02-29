@@ -42,8 +42,8 @@ pub mod capability_type {
 pub(crate) struct DescriptorWriter<'a> {
     pub buf: &'a mut [u8],
     position: usize,
-    num_interfaces_mark: Option<usize>,
-    num_endpoints_mark: Option<usize>,
+    pub num_interfaces_mark: Option<usize>,
+    pub num_endpoints_mark: Option<usize>,
 }
 
 // [09] 009: [02, 6a, 00, 02, 01, 00, 80, 32]
