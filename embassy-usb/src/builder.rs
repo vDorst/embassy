@@ -435,7 +435,39 @@ impl<'a, 'd, D: Driver<'d>> InterfaceAltBuilder<'a, 'd, D> {
             .alloc_endpoint_in(ep_type, max_packet_size, interval_ms)
             .expect("alloc_endpoint_in failed");
 
-        self.builder.config_descriptor.endpoint(ep.info());
+        match self.builder.config_descriptor.num_endpoints_mark {
+            Some(mark) => self.builder.config_descriptor.buf[mark] += 1,
+            None => panic!("you can only call `endpoint` after `interface/interface_alt`."),
+        };
+
+        let endpoint = ep.info();
+
+        let cd = &mut self.builder.config_descriptor;
+
+        let refresh = if matches!(
+            ep_type,
+            EndpointType::Isochronous((
+                IsochronousSynchronizationType::NoSynchronization,
+                IsochronousUsageType::Feedback
+            ))
+        ) {
+            2
+        } else {
+            0
+        };
+
+        cd.write(
+            descriptor_type::ENDPOINT,
+            &[
+                endpoint.addr.into(),       // bEndpointAddress
+                ep_type.to_bm_attributes(), // bmAttributes
+                endpoint.max_packet_size as u8,
+                (endpoint.max_packet_size >> 8) as u8, // wMaxPacketSize
+                endpoint.interval_ms,                  // bInterval
+                refresh,                               // bRefresh
+                0x00,                                  // bSynchAddress
+            ],
+        );
 
         ep
     }
@@ -447,9 +479,23 @@ impl<'a, 'd, D: Driver<'d>> InterfaceAltBuilder<'a, 'd, D> {
             .alloc_endpoint_out(ep_type, max_packet_size, interval_ms)
             .expect("alloc_endpoint_out failed");
 
+        match self.builder.config_descriptor.num_endpoints_mark {
+            Some(mark) => self.builder.config_descriptor.buf[mark] += 1,
+            None => panic!("you can only call `endpoint` after `interface/interface_alt`."),
+        };
+
         let endpoint = ep.info();
 
         let cd = &mut self.builder.config_descriptor;
+
+        let sync = if matches!(
+            ep_type,
+            EndpointType::Isochronous((IsochronousSynchronizationType::Asynchronous, IsochronousUsageType::Data))
+        ) {
+            0x81
+        } else {
+            0
+        };
 
         cd.write(
             descriptor_type::ENDPOINT,
@@ -460,7 +506,7 @@ impl<'a, 'd, D: Driver<'d>> InterfaceAltBuilder<'a, 'd, D> {
                 (endpoint.max_packet_size >> 8) as u8, // wMaxPacketSize
                 endpoint.interval_ms,                  // bInterval
                 0,                                     // bRefresh
-                0,                                     // bSynchAddress
+                sync,                                  // bSynchAddress
             ],
         );
 
