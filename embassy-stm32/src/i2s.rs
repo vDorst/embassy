@@ -399,6 +399,13 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
         self.ring_buffer.write_exact(data).await.map_err(|_| Error::Overrun)
     }
 
+    pub fn write_immediate(&mut self, data: &[W]) -> Result<usize, Error> {
+        self.ring_buffer
+            .write_immediate(data)
+            .map(|(n, remain)| remain)
+            .map_err(|_| Error::Overrun)
+    }
+
     /// Start the I2S driver.
     pub fn start(&mut self) {
         T::REGS.cr1().modify(|w| {
