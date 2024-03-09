@@ -399,11 +399,17 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
         self.ring_buffer.write_exact(data).await.map_err(|_| Error::Overrun)
     }
 
+    /// Write direct to the ring_buffer, fill it before starting DMA is started.
     pub fn write_immediate(&mut self, data: &[W]) -> Result<usize, Error> {
         self.ring_buffer
             .write_immediate(data)
             .map(|(n, remain)| remain)
             .map_err(|_| Error::Overrun)
+    }
+
+    /// Clear the ring_buffer.
+    pub fn clear(&mut self) {
+        self.ring_buffer.clear();
     }
 
     /// Start the I2S driver.
