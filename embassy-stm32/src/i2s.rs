@@ -156,30 +156,27 @@ impl Default for Config {
 }
 
 /// I2S driver.
-pub struct I2S<'d, T: Instance, C: Channel, W: word::Word> {
+pub struct I2S<'d, T: Instance, W: word::Word> {
     _peri: Spi<'d, T, NoDma, NoDma>,
     sd: Option<PeripheralRef<'d, AnyPin>>,
     ws: Option<PeripheralRef<'d, AnyPin>>,
     ck: Option<PeripheralRef<'d, AnyPin>>,
     mck: Option<PeripheralRef<'d, AnyPin>>,
-    ring_buffer: WritableRingBuffer<'d, C, W>,
+    ring_buffer: WritableRingBuffer<'d, W>,
 }
 
-impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
+impl<'d, T: Instance, W: word::Word> I2S<'d, T, W> {
     /// Note: Full-Duplex modes are not supported at this time
     pub fn new_no_mck(
         peri: impl Peripheral<P = T> + 'd,
         sd: impl Peripheral<P = impl MosiPin<T>> + 'd,
         ws: impl Peripheral<P = impl WsPin<T>> + 'd,
         ck: impl Peripheral<P = impl CkPin<T>> + 'd,
-        txdma: impl Peripheral<P = C> + 'd,
+        txdma: impl Peripheral<P = impl Channel + TxDma<T>> + 'd,
         dma_buf: &'d mut [W],
         freq: Hertz,
         config: Config,
-    ) -> Self
-    where
-        C: Channel + TxDma<T>,
-    {
+    ) -> Self {
         into_ref!(sd, ws, ck, txdma);
 
         sd.set_as_af(sd.af_num(), AFType::OutputPushPull);
@@ -403,7 +400,7 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
     pub fn write_immediate(&mut self, data: &[W]) -> Result<usize, Error> {
         self.ring_buffer
             .write_immediate(data)
-            .map(|(n, remain)| remain)
+            .map(|(_n, remain)| remain)
             .map_err(|_| Error::Overrun)
     }
 
@@ -452,7 +449,7 @@ impl<'d, T: Instance, C: Channel, W: word::Word> I2S<'d, T, C, W> {
     }
 }
 
-impl<'d, T: Instance, C: Channel, W: word::Word> Drop for I2S<'d, T, C, W> {
+impl<'d, T: Instance, W: word::Word> Drop for I2S<'d, T, W> {
     fn drop(&mut self) {
         self.sd.as_ref().map(|x| x.set_as_disconnected());
         self.ws.as_ref().map(|x| x.set_as_disconnected());
