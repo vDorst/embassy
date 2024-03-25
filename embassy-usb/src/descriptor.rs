@@ -1,5 +1,8 @@
 //! Utilities for writing USB descriptors.
 
+use embassy_usb_driver::EndpointType;
+use heapless::Vec;
+
 use crate::builder::Config;
 use crate::driver::EndpointInfo;
 use crate::types::{InterfaceNumber, StringIndex};
@@ -202,22 +205,53 @@ impl<'a> DescriptorWriter<'a> {
     ///
     /// * `endpoint` - Endpoint previously allocated with
     ///   [`UsbDeviceBuilder`](crate::bus::UsbDeviceBuilder).
-    pub fn endpoint(&mut self, endpoint: &EndpointInfo) {
+    pub fn endpoint(&mut self, endpoint: &EndpointInfo, config: Option<&EndpointConfig>) {
         match self.num_endpoints_mark {
             Some(mark) => self.buf[mark] += 1,
             None => panic!("you can only call `endpoint` after `interface/interface_alt`."),
         };
 
-        self.write(
-            descriptor_type::ENDPOINT,
-            &[
-                endpoint.addr.into(),   // bEndpointAddress
-                endpoint.ep_type as u8, // bmAttributes
-                endpoint.max_packet_size as u8,
-                (endpoint.max_packet_size >> 8) as u8, // wMaxPacketSize
-                endpoint.interval_ms,                  // bInterval
-            ],
-        );
+        let mut bm_attributes: u8 = endpoint.ep_type as u8;
+
+        match (endpoint.ep_type, config) {
+            (EndpointType::Isochronous, Some(cfg)) => {
+                if let Some((synchronization, usage)) = cfg.isochronous {
+                    let sync_bits = match synchronization {
+                        IsochronousSynchronizationType::NoSynchronization => 0b00,
+                        IsochronousSynchronizationType::Asynchronous => 0b01,
+                        IsochronousSynchronizationType::Adaptive => 0b10,
+                        IsochronousSynchronizationType::Synchronous => 0b11,
+                    };
+                    let usage_bits = match usage {
+                        IsochronousUsageType::Data => 0b00,
+                        IsochronousUsageType::Feedback => 0b01,
+                        IsochronousUsageType::ImplicitFeedbackData => 0b10,
+                    };
+                    bm_attributes |= (usage_bits << 4) | (sync_bits << 2);
+                }
+            }
+            (EndpointType::Control | EndpointType::Isochronous, None) => (),
+            (_, _) => panic!("Invalid `endpoint` and `config` combination"),
+        }
+
+        let mut desc: Vec<u8, 8> = Vec::new();
+
+        // bEndpointAddress
+        let _ = desc.push(endpoint.addr.into());
+        // bmAttributes
+        let _ = desc.push(bm_attributes);
+        // wMaxPacketSize
+        let _ = desc.push((endpoint.max_packet_size >> 8) as u8);
+        let _ = desc.push(endpoint.max_packet_size as u8);
+        // bInterval
+        let _ = desc.push(endpoint.interval_ms);
+
+        if let Some(cfg) = config {
+            desc.extend_from_slice(cfg.extra_data)
+                .expect("Extra data less then 4 bytes!");
+        }
+
+        self.write(descriptor_type::ENDPOINT, &desc);
     }
 
     /// Writes a string descriptor.
@@ -333,4 +367,40 @@ impl<'a> BosWriter<'a> {
         let position = self.writer.position as u16;
         self.writer.buf[2..4].copy_from_slice(&position.to_le_bytes());
     }
+}
+
+/// Isochronous transfers employ one of three synchronization schemes. See USB 2.0 spec 5.12.4.1.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum IsochronousSynchronizationType {
+    /// Synchronization is not implemented for this endpoint.
+    NoSynchronization,
+    /// Source and Sink sample clocks are free running.
+    Asynchronous,
+    /// Source sample clock is locked to Sink, Sink sample clock is locked to data flow.
+    Adaptive,
+    /// Source and Sink sample clocks are locked to USB SOF.
+    Synchronous,
+}
+
+/// Intended use of an isochronous endpoint, see USB 2.0 spec sections 5.12 and 9.6.6.
+/// Associations between data and feedback endpoints are described in section 9.6.6.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum IsochronousUsageType {
+    /// Endpoint is used for isochronous data.
+    Data,
+    /// Feedback for synchronization.
+    Feedback,
+    /// Endpoint is data and provides implicit feedback for synchronization.
+    ImplicitFeedbackData,
+}
+
+/// Isochronous endpoint need more settings
+/// Maybe add some Class Specific Data to the endpoint.
+pub struct EndpointConfig<'a> {
+    /// Isochronous Settings
+    pub isochronous: Option<(IsochronousSynchronizationType, IsochronousUsageType)>,
+    /// class specific data
+    pub extra_data: &'a [u8],
 }
