@@ -49,8 +49,8 @@ async fn main(spawner: Spawner) {
     });
 
     // blink the led on another task
-    let led = Output::new(p.PD2, Level::High, Speed::Low);
-    spawner.spawn(unwrap!(led_task(led)));
+    let led = Output::new(p.PE0, Level::High, Speed::Low);
+    unwrap!(spawner.spawn(led_task(led)));
 
     // numbers from STM32U5G9J-DK2.ioc
     const RK050HR18H_HSYNC: u16 = 5; // Horizontal synchronization
@@ -78,38 +78,10 @@ async fn main(spawner: Spawner) {
 
     info!("init ltdc");
     let mut ltdc_de = Output::new(p.PD6, Level::Low, Speed::High);
-    let mut ltdc_disp_ctrl = Output::new(p.PE4, Level::Low, Speed::High);
+    let mut ltdc_disp_ctrl = Output::new(p.PI5, Level::Low, Speed::High);
     let mut ltdc_bl_ctrl = Output::new(p.PE6, Level::Low, Speed::High);
-    let mut ltdc = Ltdc::new_with_pins(
+    let mut ltdc = Ltdc::new(
         p.LTDC, // PERIPHERAL
-        Irqs,   // IRQS
-        p.PD3,  // CLK
-        p.PE0,  // HSYNC
-        p.PD13, // VSYNC
-        p.PB9,  // B0
-        p.PB2,  // B1
-        p.PD14, // B2
-        p.PD15, // B3
-        p.PD0,  // B4
-        p.PD1,  // B5
-        p.PE7,  // B6
-        p.PE8,  // B7
-        p.PC8,  // G0
-        p.PC9,  // G1
-        p.PE9,  // G2
-        p.PE10, // G3
-        p.PE11, // G4
-        p.PE12, // G5
-        p.PE13, // G6
-        p.PE14, // G7
-        p.PC6,  // R0
-        p.PC7,  // R1
-        p.PE15, // R2
-        p.PD8,  // R3
-        p.PD9,  // R4
-        p.PD10, // R5
-        p.PD11, // R6
-        p.PD12, // R7
     );
     ltdc.init(&ltdc_config);
     ltdc_de.set_low();

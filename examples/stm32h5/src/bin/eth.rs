@@ -36,13 +36,13 @@ async fn main(spawner: Spawner) -> ! {
     config.rcc.hsi = None;
     config.rcc.hsi48 = Some(Default::default()); // needed for RNG
     config.rcc.hse = Some(Hse {
-        freq: Hertz(8_000_000),
+        freq: Hertz(25_000_000),
         mode: HseMode::BypassDigital,
     });
     config.rcc.pll1 = Some(Pll {
         source: PllSource::HSE,
-        prediv: PllPreDiv::DIV2,
-        mul: PllMul::MUL125,
+        prediv: PllPreDiv::DIV25,
+        mul: PllMul::MUL250,
         divp: Some(PllDiv::DIV2),
         divq: Some(PllDiv::DIV2),
         divr: None,
@@ -76,7 +76,7 @@ async fn main(spawner: Spawner) -> ! {
         p.PC4,
         p.PC5,
         p.PG13,
-        p.PB15,
+        p.PG12,
         p.PG11,
         GenericPhy::new_auto(),
         mac_addr,
