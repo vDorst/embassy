@@ -5,7 +5,8 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Ipv4Address, StackResources};
-use embassy_stm32::eth::{Ethernet, GenericPhy, PacketQueue};
+use embassy_phy_driver::phy::generic_phy::GenericPhy;
+use embassy_stm32::eth::{Ethernet, PacketQueue};
 use embassy_stm32::peripherals::ETH;
 use embassy_stm32::rcc::{
     AHBPrescaler, APBPrescaler, Hse, HseMode, Pll, PllDiv, PllMul, PllPreDiv, PllSource, Sysclk, VoltageScale,
