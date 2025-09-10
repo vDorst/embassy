@@ -1,9 +1,12 @@
 mod descriptors;
 
+use core::convert::Infallible;
 use core::marker::PhantomData;
 use core::sync::atomic::{fence, Ordering};
 
 use embassy_hal_internal::Peri;
+use embassy_phy_driver::phy::regs::C22;
+use embassy_phy_driver::StationManagement;
 use stm32_metapac::syscfg::vals::EthSelPhy;
 
 pub(crate) use self::descriptors::{RDes, RDesRing, TDes, TDesRing};
@@ -259,7 +262,7 @@ impl<'d, T: Instance, P: Phy> Ethernet<'d, T, P> {
             phy,
             station_management: EthernetStationManagement {
                 peri: PhantomData,
-                clock_range: clock_range,
+                clock_range,
             },
             mac_addr,
         };
@@ -286,8 +289,8 @@ impl<'d, T: Instance, P: Phy> Ethernet<'d, T, P> {
             w.set_tie(true);
         });
 
-        this.phy.phy_reset(&mut this.station_management);
-        this.phy.phy_init(&mut this.station_management);
+        let _ = this.phy.phy_reset(&mut this.station_management);
+        let _ = this.phy.phy_init(&mut this.station_management);
 
         interrupt::ETH.unpend();
         unsafe { interrupt::ETH.enable() };
@@ -303,32 +306,37 @@ pub struct EthernetStationManagement<T: Instance> {
 }
 
 impl<T: Instance> StationManagement for EthernetStationManagement<T> {
-    fn smi_read(&mut self, phy_addr: u8, reg: u8) -> u16 {
+    type Error = Infallible;
+
+    fn smi_read(&mut self, phy_addr: u8, reg: C22) -> Result<u16, Self::Error> {
         let mac = T::regs().ethernet_mac();
 
         mac.macmdioar().modify(|w| {
             w.set_pa(phy_addr);
-            w.set_rda(reg);
+            w.set_rda(reg.0);
             w.set_goc(0b11); // read
             w.set_cr(self.clock_range);
             w.set_mb(true);
         });
         while mac.macmdioar().read().mb() {}
-        mac.macmdiodr().read().md()
+
+        Ok(mac.macmdiodr().read().md())
     }
 
-    fn smi_write(&mut self, phy_addr: u8, reg: u8, val: u16) {
+    fn smi_write(&mut self, phy_addr: u8, reg: C22, val: u16) -> Result<(), Self::Error> {
         let mac = T::regs().ethernet_mac();
 
         mac.macmdiodr().write(|w| w.set_md(val));
         mac.macmdioar().modify(|w| {
             w.set_pa(phy_addr);
-            w.set_rda(reg);
+            w.set_rda(reg.0);
             w.set_goc(0b01); // write
             w.set_cr(self.clock_range);
             w.set_mb(true);
         });
         while mac.macmdioar().read().mb() {}
+
+        Ok(())
     }
 }
 

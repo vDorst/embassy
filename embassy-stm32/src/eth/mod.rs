@@ -11,6 +11,8 @@ use core::task::Context;
 
 use embassy_hal_internal::PeripheralType;
 use embassy_net_driver::{Capabilities, HardwareAddress, LinkState};
+use embassy_phy_driver::phy::{Phy, PhyLink};
+use embassy_phy_driver::StationManagement;
 use embassy_sync::waitqueue::AtomicWaker;
 
 pub use self::_version::{InterruptHandler, *};
@@ -109,7 +111,8 @@ impl<'d, T: Instance, P: Phy> embassy_net_driver::Driver for Ethernet<'d, T, P> 
     }
 
     fn link_state(&mut self, cx: &mut Context) -> LinkState {
-        if self.phy.poll_link(&mut self.station_management, cx) {
+        if let PhyLink::Up { speed, duplex } = self.phy.poll_link(&mut self.station_management, cx).unwrap() {
+            info!("Link Up: Speed: {:?}, Duplex: {:?}", speed, duplex);
             LinkState::Up
         } else {
             LinkState::Down
@@ -155,24 +158,6 @@ impl<'a, 'd> embassy_net_driver::TxToken for TxToken<'a, 'd> {
         self.tx.transmit(len);
         r
     }
-}
-
-/// Station Management Interface (SMI) on an ethernet PHY
-pub trait StationManagement {
-    /// Read a register over SMI.
-    fn smi_read(&mut self, phy_addr: u8, reg: u8) -> u16;
-    /// Write a register over SMI.
-    fn smi_write(&mut self, phy_addr: u8, reg: u8, val: u16);
-}
-
-/// Trait for an Ethernet PHY
-pub trait Phy {
-    /// Reset PHY and wait for it to come out of reset.
-    fn phy_reset<S: StationManagement>(&mut self, sm: &mut S);
-    /// PHY initialisation.
-    fn phy_init<S: StationManagement>(&mut self, sm: &mut S);
-    /// Poll link to see if it is up and FD with 100Mbps
-    fn poll_link<S: StationManagement>(&mut self, sm: &mut S, cx: &mut Context) -> bool;
 }
 
 impl<'d, T: Instance, P: Phy> Ethernet<'d, T, P> {

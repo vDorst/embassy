@@ -13,7 +13,7 @@ async fn main(_spawner: Spawner) -> ! {
     info!("Hello World!");
 
     // replace PC13 with the right pin for your board.
-    let mut led = Output::new(p.PC13, Level::Low, Speed::Medium);
+    let mut led = Output::new(p.PE0, Level::Low, Speed::Medium);
 
     loop {
         defmt::info!("on!");

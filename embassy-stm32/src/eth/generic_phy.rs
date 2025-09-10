@@ -2,27 +2,24 @@
 
 use core::task::Context;
 
+use embassy_phy_driver::{
+    phy::{
+        regs::{Mmd, C22, C45},
+        DuplexMode, Speed,
+    },
+    StationManagement,
+};
 #[cfg(feature = "time")]
 use embassy_time::{Duration, Timer};
 #[cfg(feature = "time")]
 use futures_util::FutureExt;
 
-use super::{Phy, StationManagement};
+use crate::eth::PhyLink;
+
+use super::Phy;
 
 #[allow(dead_code)]
 mod phy_consts {
-    pub const PHY_REG_BCR: u8 = 0x00;
-    pub const PHY_REG_BSR: u8 = 0x01;
-    pub const PHY_REG_ID1: u8 = 0x02;
-    pub const PHY_REG_ID2: u8 = 0x03;
-    pub const PHY_REG_ANTX: u8 = 0x04;
-    pub const PHY_REG_ANRX: u8 = 0x05;
-    pub const PHY_REG_ANEXP: u8 = 0x06;
-    pub const PHY_REG_ANNPTX: u8 = 0x07;
-    pub const PHY_REG_ANNPRX: u8 = 0x08;
-    pub const PHY_REG_CTL: u8 = 0x0D; // Ethernet PHY Register Control
-    pub const PHY_REG_ADDAR: u8 = 0x0E; // Ethernet PHY Address or Data
-
     pub const PHY_REG_WUCSR: u16 = 0x8010;
 
     pub const PHY_REG_BCR_COLTEST: u16 = 1 << 7;
@@ -90,16 +87,16 @@ fn blocking_delay_us(us: u32) {
 }
 
 impl Phy for GenericPhy {
-    fn phy_reset<S: StationManagement>(&mut self, sm: &mut S) {
+    fn phy_reset<S: StationManagement>(&mut self, sm: &mut S) -> Result<(), S::Error> {
         // Detect SMI address
         if self.phy_addr == 0xFF {
             for addr in 0..32 {
-                sm.smi_write(addr, PHY_REG_BCR, PHY_REG_BCR_RESET);
+                sm.smi_write(addr, C22::BMCR, PHY_REG_BCR_RESET)?;
                 for _ in 0..10 {
-                    if sm.smi_read(addr, PHY_REG_BCR) & PHY_REG_BCR_RESET != PHY_REG_BCR_RESET {
+                    if sm.smi_read(addr, C22::BMCR)? & PHY_REG_BCR_RESET != PHY_REG_BCR_RESET {
                         trace!("Found ETH PHY on address {}", addr);
                         self.phy_addr = addr;
-                        return;
+                        return Ok(());
                     }
                     // Give PHY a total of 100ms to respond
                     blocking_delay_us(10000);
@@ -108,42 +105,69 @@ impl Phy for GenericPhy {
             panic!("PHY did not respond");
         }
 
-        sm.smi_write(self.phy_addr, PHY_REG_BCR, PHY_REG_BCR_RESET);
-        while sm.smi_read(self.phy_addr, PHY_REG_BCR) & PHY_REG_BCR_RESET == PHY_REG_BCR_RESET {}
+        sm.smi_write(self.phy_addr, C22::BMCR, PHY_REG_BCR_RESET)?;
+
+        while sm.smi_read(self.phy_addr, C22::BMCR)? & PHY_REG_BCR_RESET == PHY_REG_BCR_RESET {}
+
+        Ok(())
     }
 
-    fn phy_init<S: StationManagement>(&mut self, sm: &mut S) {
+    fn phy_init<S: StationManagement>(&mut self, sm: &mut S) -> Result<(), S::Error> {
         // Clear WU CSR
-        self.smi_write_ext(sm, PHY_REG_WUCSR, 0);
+        sm.smi_write_mmd(self.phy_addr, C45::new(Mmd::PCS, PHY_REG_WUCSR), 0)?;
 
         // Enable auto-negotiation
         sm.smi_write(
             self.phy_addr,
-            PHY_REG_BCR,
+            C22::BMCR,
             PHY_REG_BCR_AN | PHY_REG_BCR_ANRST | PHY_REG_BCR_100M,
-        );
+        )
     }
 
-    fn poll_link<S: StationManagement>(&mut self, sm: &mut S, cx: &mut Context) -> bool {
+    fn poll_link<S: StationManagement>(&mut self, sm: &mut S, cx: &mut Context) -> Result<PhyLink, S::Error> {
         #[cfg(not(feature = "time"))]
         cx.waker().wake_by_ref();
 
         #[cfg(feature = "time")]
         let _ = Timer::after(self.poll_interval).poll_unpin(cx);
 
-        let bsr = sm.smi_read(self.phy_addr, PHY_REG_BSR);
+        let bmsr = sm.smi_read(self.phy_addr, C22::BMSR)?;
 
         // No link without autonegotiate
-        if bsr & PHY_REG_BSR_ANDONE == 0 {
-            return false;
+        if bmsr & PHY_REG_BSR_ANDONE == 0 {
+            return Ok(PhyLink::Down);
         }
         // No link if link is down
-        if bsr & PHY_REG_BSR_UP == 0 {
-            return false;
+        if bmsr & PHY_REG_BSR_UP == 0 {
+            return Ok(PhyLink::Down);
         }
 
-        // Got link
-        true
+        let advertising = sm.smi_read(self.phy_addr, C22::ADVERTISE)?;
+        let lpa = sm.smi_read(self.phy_addr, C22::LPA)?;
+
+        let nego = advertising & lpa;
+
+        Ok(if nego & 0x0100 != 0 {
+            PhyLink::Up {
+                speed: Speed::_100,
+                duplex: DuplexMode::Full,
+            }
+        } else if nego & 0x0080 != 0 {
+            PhyLink::Up {
+                speed: Speed::_100,
+                duplex: DuplexMode::Half,
+            }
+        } else if nego & 0x0040 != 0 {
+            PhyLink::Up {
+                speed: Speed::_10,
+                duplex: DuplexMode::Full,
+            }
+        } else {
+            PhyLink::Up {
+                speed: Speed::_10,
+                duplex: DuplexMode::Half,
+            }
+        })
     }
 }
 
@@ -153,13 +177,5 @@ impl GenericPhy {
     #[cfg(feature = "time")]
     pub fn set_poll_interval(&mut self, poll_interval: Duration) {
         self.poll_interval = poll_interval
-    }
-
-    // Writes a value to an extended PHY register in MMD address space
-    fn smi_write_ext<S: StationManagement>(&mut self, sm: &mut S, reg_addr: u16, reg_data: u16) {
-        sm.smi_write(self.phy_addr, PHY_REG_CTL, 0x0003); // set address
-        sm.smi_write(self.phy_addr, PHY_REG_ADDAR, reg_addr);
-        sm.smi_write(self.phy_addr, PHY_REG_CTL, 0x4003); // set data
-        sm.smi_write(self.phy_addr, PHY_REG_ADDAR, reg_data);
     }
 }
