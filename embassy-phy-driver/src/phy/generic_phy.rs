@@ -2,19 +2,18 @@
 
 use core::task::Context;
 
-use embassy_phy_driver::{
-    phy::{
-        regs::{Mmd, C22, C45},
-        DuplexMode, Speed,
-    },
-    StationManagement,
-};
 #[cfg(feature = "time")]
 use embassy_time::{Duration, Timer};
 #[cfg(feature = "time")]
 use futures_util::FutureExt;
 
-use crate::eth::PhyLink;
+use crate::{
+    phy::{
+        regs::{Mmd, C22, C45},
+        DuplexMode, LinkStatus, Speed,
+    },
+    StationManagement,
+};
 
 use super::Phy;
 
@@ -79,10 +78,13 @@ fn blocking_delay_us(us: u32) {
     embassy_time::block_for(Duration::from_micros(us as u64));
     #[cfg(not(feature = "time"))]
     {
-        let freq = unsafe { crate::rcc::get_freqs() }.sys.to_hertz().unwrap().0 as u64;
-        let us = us as u64;
-        let cycles = freq * us / 1_000_000;
-        cortex_m::asm::delay(cycles as u32);
+        use core::hint::black_box;
+
+        black_box(us);
+        // let freq = unsafe { crate::rcc::get_freqs() }.sys.to_hertz().unwrap().0 as u64;
+        // let us = us as u64;
+        // let cycles = freq * us / 1_000_000;
+        // cortex_m::asm::delay(cycles as u32);
     }
 }
 
@@ -94,7 +96,8 @@ impl Phy for GenericPhy {
                 sm.smi_write(addr, C22::BMCR, PHY_REG_BCR_RESET)?;
                 for _ in 0..10 {
                     if sm.smi_read(addr, C22::BMCR)? & PHY_REG_BCR_RESET != PHY_REG_BCR_RESET {
-                        trace!("Found ETH PHY on address {}", addr);
+                        #[cfg(feature = "defmt")]
+                        defmt::trace!("Found ETH PHY on address {}", addr);
                         self.phy_addr = addr;
                         return Ok(());
                     }
@@ -124,7 +127,7 @@ impl Phy for GenericPhy {
         )
     }
 
-    fn poll_link<S: StationManagement>(&mut self, sm: &mut S, cx: &mut Context) -> Result<PhyLink, S::Error> {
+    fn poll_link<S: StationManagement>(&mut self, sm: &mut S, cx: &mut Context) -> Result<LinkStatus, S::Error> {
         #[cfg(not(feature = "time"))]
         cx.waker().wake_by_ref();
 
@@ -135,11 +138,11 @@ impl Phy for GenericPhy {
 
         // No link without autonegotiate
         if bmsr & PHY_REG_BSR_ANDONE == 0 {
-            return Ok(PhyLink::Down);
+            return Ok(LinkStatus::Down);
         }
         // No link if link is down
         if bmsr & PHY_REG_BSR_UP == 0 {
-            return Ok(PhyLink::Down);
+            return Ok(LinkStatus::Down);
         }
 
         let advertising = sm.smi_read(self.phy_addr, C22::ADVERTISE)?;
@@ -148,22 +151,22 @@ impl Phy for GenericPhy {
         let nego = advertising & lpa;
 
         Ok(if nego & 0x0100 != 0 {
-            PhyLink::Up {
+            LinkStatus::Up {
                 speed: Speed::_100,
                 duplex: DuplexMode::Full,
             }
         } else if nego & 0x0080 != 0 {
-            PhyLink::Up {
+            LinkStatus::Up {
                 speed: Speed::_100,
                 duplex: DuplexMode::Half,
             }
         } else if nego & 0x0040 != 0 {
-            PhyLink::Up {
+            LinkStatus::Up {
                 speed: Speed::_10,
                 duplex: DuplexMode::Full,
             }
         } else {
-            PhyLink::Up {
+            LinkStatus::Up {
                 speed: Speed::_10,
                 duplex: DuplexMode::Half,
             }

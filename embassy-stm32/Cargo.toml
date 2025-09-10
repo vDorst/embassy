@@ -221,6 +221,7 @@ defmt = [
     "embedded-io-async/defmt-03",
     "embassy-usb-driver/defmt",
     "embassy-net-driver/defmt",
+	"embassy-phy-driver/defmt",
     "embassy-time?/defmt",
     "embassy-usb-synopsys-otg/defmt",
     "stm32-metapac/defmt"
