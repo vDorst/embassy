@@ -4,19 +4,17 @@
 #[cfg_attr(any(eth_v1a, eth_v1b, eth_v1c), path = "v1/mod.rs")]
 #[cfg_attr(eth_v2, path = "v2/mod.rs")]
 mod _version;
-mod generic_phy;
 
 use core::mem::MaybeUninit;
 use core::task::Context;
 
 use embassy_hal_internal::PeripheralType;
 use embassy_net_driver::{Capabilities, HardwareAddress, LinkState};
-use embassy_phy_driver::phy::{Phy, PhyLink};
+use embassy_phy_driver::phy::{LinkStatus, Phy};
 use embassy_phy_driver::StationManagement;
 use embassy_sync::waitqueue::AtomicWaker;
 
 pub use self::_version::{InterruptHandler, *};
-pub use self::generic_phy::*;
 use crate::rcc::RccPeripheral;
 
 #[allow(unused)]
@@ -111,7 +109,7 @@ impl<'d, T: Instance, P: Phy> embassy_net_driver::Driver for Ethernet<'d, T, P> 
     }
 
     fn link_state(&mut self, cx: &mut Context) -> LinkState {
-        if let PhyLink::Up { speed, duplex } = self.phy.poll_link(&mut self.station_management, cx).unwrap() {
+        if let LinkStatus::Up { speed, duplex } = self.phy.poll_link(&mut self.station_management, cx).unwrap() {
             info!("Link Up: Speed: {:?}, Duplex: {:?}", speed, duplex);
             LinkState::Up
         } else {

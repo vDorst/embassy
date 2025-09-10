@@ -2,6 +2,7 @@ use core::task::Context;
 
 use crate::StationManagement;
 
+pub mod generic_phy;
 pub mod regs;
 
 /// Link Speed
